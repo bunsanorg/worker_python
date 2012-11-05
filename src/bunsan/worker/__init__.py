@@ -93,11 +93,12 @@ class _HubProxy(object):
 
 class _Callback(object):
 
-    def __init__(self, *args):
-        pass
-
-    def send(self, *args, **kwargs):
-        pass
+    def __init__(self, uri, method, *args):
+        proxy = xmlrpc.client.ServerProxy(uri)
+        method = getattr(proxy, method)
+        def impl(msg_type, *arguments):
+            method(msg_type, *map(str, arguments))
+        self.send = impl
 
 
 class _ProcessSettings(object):
@@ -139,17 +140,24 @@ def _worker(num):
             callback = task.callback
             callback.send('STARTED')
             with tempfile.TemporaryDirectory(dir=_tmpdir) as tmpdir:
-                _repository.extract(task.package, tmpdir.name)
-                with subprocess.Popen(task.process.arguments, cwd=tmpdir.name, stdin=subprocess.PIPE) as proc:
+                callback.send('EXTRACTING')
+                __log("extracting to " + tmpdir)
+                _repository.extract(task.package, tmpdir)
+                callback.send('EXTRACTED')
+                __log("running " + repr(task.process.arguments))
+                with subprocess.Popen(task.process.arguments, cwd=tmpdir, stdin=subprocess.PIPE) as proc:
                     if task.process.stdin_data is not None:
                         proc.stdin.write(task.process.stdin_data)
                     proc.stdin.close()
                     ret = proc.wait()
                     if ret != 0:
-                        raise RuntimeError("Non-zero exit status")
+                        raise subprocess.CalledProcessError(ret, task.process.arguments)
+            callback.send('DONE')
         except Exception as e:
             try:
-                callback.send('FAIL', e)
+                __log('failed due to: ' + str(e))
+                __log('failed due to: ' + traceback.format_exc())
+                callback.send('FAIL', traceback.format_exc())
             except:
                 pass
         _queue.task_done()
