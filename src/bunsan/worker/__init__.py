@@ -6,6 +6,8 @@ import queue
 import xmlrpc.client
 import xmlrpc.server
 import threading
+import tempfile
+import subprocess
 
 import bunsan.pm
 
@@ -117,9 +119,11 @@ class _Task(object):
 _queue = queue.Queue()
 _repository = None
 _hub = None
+_tmpdir = None
 def _worker(num):
     assert _repository is not None
     assert _hub is not None
+    assert _tmpdir is not None
     def __log(*args, **kwargs):
         args = ["Worker {}:".format(num)] + list(args)
         _log(*args, **kwargs)
@@ -134,9 +138,15 @@ def _worker(num):
         try:
             callback = task.callback
             callback.send('STARTED')
-            # TODO
-            time.sleep(1)
-            callback.send('DONE')
+            with tempfile.TemporaryDirectory(dir=_tmpdir) as tmpdir:
+                _repository.extract(task.package, tmpdir.name)
+                with subprocess.Popen(task.process.arguments, cwd=tmpdir.name, stdin=subprocess.PIPE) as proc:
+                    if task.process.stdin_data is not None:
+                        proc.stdin.write(task.process.stdin_data)
+                    proc.stdin.close()
+                    ret = proc.wait()
+                    if ret != 0:
+                        raise RuntimeError("Non-zero exit status")
         except Exception as e:
             try:
                 callback.send('FAIL', e)
@@ -198,11 +208,13 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--worker-count', action='store', dest='worker_count', type=int, help='worker count', default=1)
     parser.add_argument('-r', '--repository-config', action='store', dest='repository_config', help='path to repository config', required=True)
     parser.add_argument('-s', '--resource', action='append', dest='resources', help='resources in format resource_id=resource_uri')
+    parser.add_argument('-t', '--tmpdir', action='store', dest='tmpdir', help='temporary directory path', default='/tmp')
     args = parser.parse_args()
     host, port = tuple(args.addr.split(':'))
     port = int(port)
     _repository = bunsan.pm.Repository(args.repository_config)
     _hub = _Hub(hub_uri=args.hub_uri, machine=args.machine)
+    _tmpdir = args.tmpdir
     def split_resource(s):
         pos = s.index('=')
         return (s[:pos], s[pos + 1:])
