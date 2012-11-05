@@ -33,6 +33,16 @@ def _interrupt_raiser(signum, frame):
     raise(_InterruptedError(signum))
 
 
+class _Hub(object):
+
+    def __init__(self, *args, **kwargs):
+        self._args = args
+        self._kwargs = kwargs
+
+    def proxy(self):
+        return _HubProxy(*self._args, **self._kwargs)
+
+
 class _HubProxy(object):
 
     def __init__(self, hub_uri, machine):
@@ -69,6 +79,15 @@ class _HubProxy(object):
     def select_resource(self, resource):
         return self._hub.select_resource(self._machine)
 
+    def context(self, *args, **kwargs):
+        hub = self
+        class Context(object):
+            def __enter__(self):
+                hub.add_machine(*args, **kwargs)
+            def __exit__(self, exc_type, exc_value, traceback):
+                hub.remove_machine()
+        return Context()
+
 
 class _Callback(object):
 
@@ -104,16 +123,19 @@ def _worker(num):
     def __log(*args, **kwargs):
         args = ["Worker {}:".format(num)] + list(args)
         _log(*args, **kwargs)
+    hub = _hub.proxy()
     __log("started")
     while True:
         __log("waiting for task")
         task = _queue.get()
+        hub.decrease_capacity()
         __log("task received")
         callback = None
         try:
             callback = task.callback
             callback.send('STARTED')
             # TODO
+            time.sleep(1)
             callback.send('DONE')
         except Exception as e:
             try:
@@ -121,6 +143,7 @@ def _worker(num):
             except:
                 pass
         _queue.task_done()
+        hub.increase_capacity()
 
 
 def _add_task(callback, package, process):
@@ -131,23 +154,38 @@ def _add_task(callback, package, process):
     _queue.put(_Task(callback=callback_, package=package, process=process_))
 
 
-def _interface(addr, hub_uri, worker_count):
+def _ping_it():
+    hub = _hub.proxy()
+    while True:
+        hub.ping()
+        _log("Pinged.")
+        time.sleep(10)
+
+
+def _interface(addr, hub_uri, worker_count, resources):
     signal.signal(signal.SIGTERM, _interrupt_raiser)
     _log("Starting worker at {} hub={} threads={}".format(addr, hub_uri, worker_count))
-    server = xmlrpc.server.SimpleXMLRPCServer(addr=addr, allow_none=True)
-    server.register_function(_add_task, name='add_task')
-    _log("Starting threads...")
-    for i in range(worker_count):
-        thread = threading.Thread(target=_worker, args=(i,))
-        thread.daemon = True
-        thread.start()
-    _log("{} workers were started.".format(worker_count))
-    _log("Starting xmlrpc server...")
-    try:
-        server.serve_forever()
-    except (KeyboardInterrupt, _InterruptedError) as e:
-        _log("Exiting.")
-        _queue.join()
+    hub = _hub.proxy()
+    with hub.context(capacity=worker_count):
+        pinger = threading.Thread(target=_ping_it)
+        pinger.daemon = True
+        pinger.start()
+        for resource, uri in resources:
+            hub.add_resource(resource, uri)
+        server = xmlrpc.server.SimpleXMLRPCServer(addr=addr, allow_none=True)
+        server.register_function(_add_task, name='add_task')
+        _log("Starting threads...")
+        for i in range(worker_count):
+            thread = threading.Thread(target=_worker, args=(i,))
+            thread.daemon = True
+            thread.start()
+        _log("{} workers were started.".format(worker_count))
+        _log("Starting xmlrpc server...")
+        try:
+            server.serve_forever()
+        except (KeyboardInterrupt, _InterruptedError) as e:
+            _log("Exiting.")
+            _queue.join()
 
 
 if __name__ == '__main__':
@@ -156,12 +194,17 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--version', action='version', version='%(prog)s 0.0.1', help="version information")
     parser.add_argument('-l', '--listen', action='store', dest='addr', help='Listen on addr:port', required=True)
     parser.add_argument('-d', '--hub', action='store', dest='hub_uri', help='hub xmlrpc interface', required=True)
-    parser.add_argument('-m', '--machine', action='store', dest='machine', help='machine name', required=False)
+    parser.add_argument('-m', '--machine', action='store', dest='machine', help='machine name', required=True)
     parser.add_argument('-c', '--worker-count', action='store', dest='worker_count', type=int, help='worker count', default=1)
     parser.add_argument('-r', '--repository-config', action='store', dest='repository_config', help='path to repository config', required=True)
+    parser.add_argument('-s', '--resource', action='append', dest='resources', help='resources in format resource_id=resource_uri')
     args = parser.parse_args()
     host, port = tuple(args.addr.split(':'))
     port = int(port)
     _repository = bunsan.pm.Repository(args.repository_config)
-    _hub = _HubProxy(hub_uri=args.hub_uri, machine=args.machine)
-    _interface(addr=(host, port), hub_uri=args.hub_uri, worker_count=args.worker_count)
+    _hub = _Hub(hub_uri=args.hub_uri, machine=args.machine)
+    def split_resource(s):
+        pos = s.index('=')
+        return (s[:pos], s[pos + 1:])
+    resources = list(map(split_resource, args.resources or []))
+    _interface(addr=(host, port), hub_uri=args.hub_uri, worker_count=args.worker_count, resources=resources)
