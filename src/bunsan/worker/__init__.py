@@ -95,10 +95,11 @@ class _Callback(object):
 
     def __init__(self, uri, method, *args):
         proxy = xmlrpc.client.ServerProxy(uri)
-        method = getattr(proxy, method)
-        def impl(msg_type, *arguments):
-            method(msg_type, *map(str, arguments))
-        self.send = impl
+        self._method = getattr(proxy, method)
+        self._args = args
+
+    def send(self, msg_type, *args):
+        return self._method(self._args, msg_type, *args)
 
 
 class _ProcessSettings(object):
@@ -165,10 +166,12 @@ def _worker(num):
 
 
 def _add_task(callback, package, process):
+    _log("Received new task, parsing...")
     assert callback['type'] == 'xmlrpc'
     callback_ = _Callback(*callback['arguments'])
     process_ = _ProcessSettings(**process)
     callback_.send('RECEIVED')
+    _log("Registered new task.")
     _queue.put(_Task(callback=callback_, package=package, process=process_))
 
 
