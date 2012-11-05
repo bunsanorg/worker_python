@@ -35,6 +35,18 @@ def _interrupt_raiser(signum, frame):
     raise(_InterruptedError(signum))
 
 
+def _auto_restart(func):
+    def func_(*args, **kwargs):
+        completed = False
+        while not completed:
+            try:
+                func(*args, **kwargs)
+                completed = True
+            except Exception as e:
+                _log('Exception occurred:', e, 'restarting')
+    return func_
+
+
 class _Hub(object):
 
     def __init__(self, *args, **kwargs):
@@ -118,10 +130,14 @@ class _Task(object):
 
 
 # global variables
+_quit = threading.Event()
 _queue = queue.Queue()
 _repository = None
 _hub = None
 _tmpdir = None
+
+
+@_auto_restart
 def _worker(num):
     assert _repository is not None
     assert _hub is not None
@@ -131,7 +147,7 @@ def _worker(num):
         _log(*args, **kwargs)
     hub = _hub.proxy()
     __log("started")
-    while True:
+    while not _quit.is_set():
         __log("waiting for task")
         task = _queue.get()
         hub.decrease_capacity()
@@ -142,10 +158,10 @@ def _worker(num):
             callback.send('STARTED')
             with tempfile.TemporaryDirectory(dir=_tmpdir) as tmpdir:
                 callback.send('EXTRACTING')
-                __log("extracting to " + tmpdir)
+                __log("extracting to ", tmpdir)
                 _repository.extract(task.package, tmpdir)
                 callback.send('EXTRACTED')
-                __log("running " + repr(task.process.arguments))
+                __log("running ", repr(task.process.arguments))
                 with subprocess.Popen(task.process.arguments, cwd=tmpdir, stdin=subprocess.PIPE) as proc:
                     if task.process.stdin_data is not None:
                         proc.stdin.write(task.process.stdin_data)
@@ -156,8 +172,7 @@ def _worker(num):
             callback.send('DONE')
         except Exception as e:
             try:
-                __log('failed due to: ' + str(e))
-                __log('failed due to: ' + traceback.format_exc())
+                __log('failed due to:', traceback.format_exc())
                 callback.send('FAIL', traceback.format_exc())
             except:
                 pass
@@ -175,9 +190,10 @@ def _add_task(callback, package, process):
     _queue.put(_Task(callback=callback_, package=package, process=process_))
 
 
+@_auto_restart
 def _ping_it():
     hub = _hub.proxy()
-    while True:
+    while _quit.is_set():
         hub.ping()
         _log("Pinged.")
         time.sleep(10)
@@ -189,24 +205,27 @@ def _interface(addr, hub_uri, worker_count, resources):
     hub = _hub.proxy()
     with hub.context(capacity=worker_count):
         pinger = threading.Thread(target=_ping_it)
-        pinger.daemon = True
         pinger.start()
         for resource, uri in resources:
             hub.add_resource(resource, uri)
         server = xmlrpc.server.SimpleXMLRPCServer(addr=addr, allow_none=True)
         server.register_function(_add_task, name='add_task')
         _log("Starting threads...")
+        workers = []
         for i in range(worker_count):
             thread = threading.Thread(target=_worker, args=(i,))
-            thread.daemon = True
             thread.start()
+            workers.append(thread)
         _log("{} workers were started.".format(worker_count))
         _log("Starting xmlrpc server...")
         try:
             server.serve_forever()
         except (KeyboardInterrupt, _InterruptedError) as e:
             _log("Exiting.")
-            _queue.join()
+            _quit.set()
+            pinger.join()
+            for worker in workers:
+                worker.join()
 
 
 if __name__ == '__main__':
