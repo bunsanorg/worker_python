@@ -11,6 +11,9 @@ import subprocess
 
 import bunsan.pm
 
+from bunsan.worker.dcs import *
+from bunsan.worker.callback import *
+
 # for logging
 import math
 import traceback
@@ -51,73 +54,6 @@ def _auto_restart(func):
         __log('exiting.')
     return func_
 
-
-class _Hub(object):
-
-    def __init__(self, *args, **kwargs):
-        self._args = args
-        self._kwargs = kwargs
-
-    def proxy(self):
-        return _HubProxy(*self._args, **self._kwargs)
-
-
-class _HubProxy(object):
-
-    def __init__(self, hub_uri, machine):
-        self._hub = xmlrpc.client.ServerProxy(hub_uri)
-        self._machine = str(machine)
-
-    def ping(self):
-        return self._hub.ping(self._machine)
-
-    def add_machine(self, capacity):
-        return self._hub.add_machine(self._machine, float(capacity))
-
-    def remove_machine(self):
-        return self._hub.remove_machine(self._machine)
-
-    def set_capacity(self, capacity):
-        return self._hub.set_capacity(self._machine, float(capacity))
-
-    def set_resource_uri(self, resource, uri):
-        return self._hub.set_resource_uri(self._machine, resource, uri)
-
-    def increase_capacity(self, delta=1):
-        return self._hub.increase_capacity(self._machine, float(delta))
-
-    def decrease_capacity(self, delta=1):
-        return self._hub.decrease_capacity(self._machine, float(delta))
-
-    def add_resource(self, resource, uri):
-        return self._hub.add_resource(self._machine, resource, uri)
-
-    def remove_resource(self, resource):
-        return self._hub.remove_resource(self._machine, resource)
-
-    def select_resource(self, resource):
-        return self._hub.select_resource(self._machine)
-
-    def context(self, *args, **kwargs):
-        hub = self
-        class Context(object):
-            def __enter__(self):
-                hub.add_machine(*args, **kwargs)
-            def __exit__(self, exc_type, exc_value, traceback):
-                hub.remove_machine()
-        return Context()
-
-
-class _Callback(object):
-
-    def __init__(self, uri, method, *args):
-        proxy = xmlrpc.client.ServerProxy(uri)
-        self._method = getattr(proxy, method)
-        self._args = args
-
-    def send(self, msg_type, *args):
-        args_ = list(self._args) + [msg_type] + list(args)
-        return self._method(*args_)
 
 
 class _ProcessSettings(object):
@@ -200,7 +136,7 @@ def _worker(num):
 def _add_task(callback, package, process):
     _log("Received new task, parsing...")
     assert callback['type'] == 'xmlrpc'
-    callback_ = _Callback(*callback['arguments'])
+    callback_ = XMLRPCCallback(*callback['arguments'])
     process_ = _ProcessSettings(**process)
     callback_.send('RECEIVED')
     _log("Registered new task.")
@@ -262,7 +198,7 @@ if __name__ == '__main__':
     host, port = tuple(args.addr.split(':'))
     port = int(port)
     _repository = bunsan.pm.Repository(args.repository_config)
-    _hub = _Hub(hub_uri=args.hub_uri, machine=args.machine)
+    _hub = Hub(hub_uri=args.hub_uri, machine=args.machine)
     _tmpdir = args.tmpdir
     def split_resource(s):
         pos = s.index('=')
