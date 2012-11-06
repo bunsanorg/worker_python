@@ -36,14 +36,19 @@ def _interrupt_raiser(signum, frame):
 
 
 def _auto_restart(func):
+    def __log(*args, **kwargs):
+        args = ["Function {}:".format(func)] + list(args)
+        _log(*args, **kwargs)
     def func_(*args, **kwargs):
         completed = False
         while not completed:
             try:
                 func(*args, **kwargs)
+                __log('completed.')
                 completed = True
             except Exception as e:
-                _log('Exception occurred:', e, 'restarting')
+                __log('exception occurred:', e)
+        __log('exiting.')
     return func_
 
 
