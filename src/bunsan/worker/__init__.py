@@ -151,7 +151,14 @@ class Worker(object):
             _log("Registered.")
             callback_.send('REGISTERED')
 
-        def serve_forever(self):
+        def serve_forever(self, signals=None):
+            """
+                \param signals which signals will cause normal exit
+            """
+            if signals is not None:
+                for s in signals:
+                    _log("Registering", _interrupt_raiser, "for", s, "signal...")
+                    signal.signal(s, _interrupt_raiser)
             _log("Starting {worker_count} workers listening on {addr}".format(addr=addr, worker_count=worker_count))
             hub = self._hub.proxy()
             with hub.context(capacity=self._worker_count):
@@ -207,5 +214,4 @@ if __name__ == '__main__':
         repository=bunsan.pm.Repository(args.repository_config),
         hub=Hub(hub_uri=args.hub_uri, machine=args.machine),
         tmpdir=args.tmpdir)
-    signal.signal(signal.SIGTERM, _interrupt_raiser)
-    worker.serve_forever()
+    worker.serve_forever(signals=[signal.SIGTERM])
