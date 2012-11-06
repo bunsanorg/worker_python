@@ -9,7 +9,6 @@ import threading
 import tempfile
 import subprocess
 
-from bunsan.worker.dcs import *
 from bunsan.worker.callback import *
 
 # for logging
@@ -91,7 +90,7 @@ class Worker(object):
             _log(*args, **kwargs)
         hub = self._hub.proxy()
         __log("started")
-        while not _quit.is_set():
+        while not self._quit.is_set():
             __log("waiting for task")
             task = None
             while not self._quit.is_set() and task is None:
@@ -131,57 +130,57 @@ class Worker(object):
             self._queue.task_done()
             hub.increase_capacity()
 
-        @_auto_restart
-        def _ping_it(self):
-            hub = self._hub.proxy()
-            while not self._quit.wait(timeout=10):
-                hub.ping()
-                _log("Pinged.")
+    @_auto_restart
+    def _ping_it(self):
+        hub = self._hub.proxy()
+        while not self._quit.wait(timeout=10):
+            hub.ping()
+            _log("Pinged.")
 
-        def _add_task(self, callback, package, process):
-            _log("Received new task, parsing...")
-            assert callback['type'] == 'xmlrpc'
-            callback_ = XMLRPCCallback(*callback['arguments'])
-            process_ = _ProcessSettings(**process)
-            callback_.send('RECEIVED')
-            _log("Registering new task...")
-            self._queue.put(_Task(callback=callback_, package=package, process=process_))
-            _log("Registered.")
-            callback_.send('REGISTERED')
+    def _add_task(self, callback, package, process):
+        _log("Received new task, parsing...")
+        assert callback['type'] == 'xmlrpc'
+        callback_ = XMLRPCCallback(*callback['arguments'])
+        process_ = _ProcessSettings(**process)
+        callback_.send('RECEIVED')
+        _log("Registering new task...")
+        self._queue.put(_Task(callback=callback_, package=package, process=process_))
+        _log("Registered.")
+        callback_.send('REGISTERED')
 
-        def serve_forever(self, signals=None):
-            """
-                \param signals which signals will cause normal exit
-            """
-            if signals is not None:
-                for s in signals:
-                    _log("Registering", _interrupt_raiser, "for", s, "signal...")
-                    signal.signal(s, _interrupt_raiser)
-            _log("Starting {worker_count} workers listening on {addr}".format(addr=addr, worker_count=worker_count))
-            hub = self._hub.proxy()
-            with hub.context(capacity=self._worker_count):
-                pinger = threading.Thread(target=self._ping_it)
-                pinger.start()
-                for resource, uri in self._resources:
-                    hub.add_resource(resource, uri)
-                server = xmlrpc.server.SimpleXMLRPCServer(addr=self._addr, allow_none=True)
-                server.register_function(self._add_task, name='add_task')
-                _log("Starting threads...")
-                workers = []
-                for i in range(worker_count):
-                    thread = threading.Thread(target=_worker, args=(i,))
-                    thread.start()
-                    workers.append(thread)
-                _log("{} workers were started.".format(worker_count))
-                _log("Starting xmlrpc server...")
-                try:
-                    server.serve_forever()
-                except (KeyboardInterrupt, _InterruptedError) as e:
-                    _log("Exiting.")
-                    self._quit.set()
-                    _log("Joining pinger...")
-                    pinger.join()
-                    _log("Joining workers...")
-                    for worker in workers:
-                        worker.join()
-                    _log("Completed.")
+    def serve_forever(self, signals=None):
+        """
+            \param signals which signals will cause normal exit
+        """
+        if signals is not None:
+            for s in signals:
+                _log("Registering", _interrupt_raiser, "for", s, "signal...")
+                signal.signal(s, _interrupt_raiser)
+        _log("Starting {worker_count} workers listening on {addr}".format(addr=self._addr, worker_count=self._worker_count))
+        hub = self._hub.proxy()
+        with hub.context(capacity=self._worker_count):
+            pinger = threading.Thread(target=self._ping_it)
+            pinger.start()
+            for resource, uri in self._resources:
+                hub.add_resource(resource, uri)
+            server = xmlrpc.server.SimpleXMLRPCServer(addr=self._addr, allow_none=True)
+            server.register_function(self._add_task, name='add_task')
+            _log("Starting threads...")
+            workers = []
+            for i in range(self._worker_count):
+                thread = threading.Thread(target=self._worker, args=(i,))
+                thread.start()
+                workers.append(thread)
+            _log("{} workers were started.".format(self._worker_count))
+            _log("Starting xmlrpc server...")
+            try:
+                server.serve_forever()
+            except (KeyboardInterrupt, _InterruptedError) as e:
+                _log("Exiting.")
+                self._quit.set()
+                _log("Joining pinger...")
+                pinger.join()
+                _log("Joining workers...")
+                for worker in workers:
+                    worker.join()
+                _log("Completed.")
