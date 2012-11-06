@@ -74,113 +74,112 @@ class _Task(object):
         self.process = process
 
 
-# global variables
-_quit = threading.Event()
-_queue = queue.Queue()
-_repository = None
-_hub = None
-_tmpdir = None
+class Worker(object):
 
+    def __init__(self, repository, hub, tmpdir, addr, worker_count, resources):
+        self._quit = threading.Event()
+        self._queue = queue.Queue()
+        self._repository = repository
+        self._hub = hub
+        self._tmpdir = tmpdir
+        self._addr = addr
+        self._worker_count = worker_count
+        self._resources = resources
 
-@_auto_restart
-def _worker(num):
-    assert _repository is not None
-    assert _hub is not None
-    assert _tmpdir is not None
-    def __log(*args, **kwargs):
-        args = ["Worker {}:".format(num)] + list(args)
-        _log(*args, **kwargs)
-    hub = _hub.proxy()
-    __log("started")
-    while not _quit.is_set():
-        __log("waiting for task")
-        task = None
-        while not _quit.is_set() and task is None:
+    @_auto_restart
+    def _worker(self, num):
+        def __log(*args, **kwargs):
+            args = ["Worker {}:".format(num)] + list(args)
+            _log(*args, **kwargs)
+        hub = self._hub.proxy()
+        __log("started")
+        while not _quit.is_set():
+            __log("waiting for task")
+            task = None
+            while not self._quit.is_set() and task is None:
+                try:
+                    task = self._queue.get(timeout=0.1)
+                except queue.Empty:
+                    pass
+            if self._quit.is_set():
+                return
+            assert task is not None
+            hub.decrease_capacity()
+            __log("task received")
+            callback = None
             try:
-                task = _queue.get(timeout=0.1)
-            except queue.Empty:
-                pass
-        if _quit.is_set():
-            return
-        assert task is not None
-        hub.decrease_capacity()
-        __log("task received")
-        callback = None
-        try:
-            callback = task.callback
-            callback.send('STARTED')
-            with tempfile.TemporaryDirectory(dir=_tmpdir) as tmpdir:
-                callback.send('EXTRACTING')
-                __log("extracting to ", tmpdir)
-                _repository.extract(task.package, tmpdir)
-                callback.send('EXTRACTED')
-                __log("running ", repr(task.process.arguments))
-                with subprocess.Popen(task.process.arguments, cwd=tmpdir, stdin=subprocess.PIPE) as proc:
-                    if task.process.stdin_data is not None:
-                        proc.stdin.write(task.process.stdin_data)
-                    proc.stdin.close()
-                    ret = proc.wait()
-                    if ret != 0:
-                        raise subprocess.CalledProcessError(ret, task.process.arguments)
-            callback.send('DONE')
-        except Exception as e:
-            try:
-                __log('failed due to:', traceback.format_exc())
-                callback.send('FAIL', traceback.format_exc())
-            except:
-                pass
-        _queue.task_done()
-        hub.increase_capacity()
+                callback = task.callback
+                callback.send('STARTED')
+                with tempfile.TemporaryDirectory(dir=self._tmpdir) as tmpdir:
+                    callback.send('EXTRACTING')
+                    __log("extracting to ", tmpdir)
+                    self._repository.extract(task.package, tmpdir)
+                    callback.send('EXTRACTED')
+                    __log("running ", repr(task.process.arguments))
+                    with subprocess.Popen(task.process.arguments, cwd=tmpdir, stdin=subprocess.PIPE) as proc:
+                        if task.process.stdin_data is not None:
+                            proc.stdin.write(task.process.stdin_data)
+                        proc.stdin.close()
+                        ret = proc.wait()
+                        if ret != 0:
+                            raise subprocess.CalledProcessError(ret, task.process.arguments)
+                callback.send('DONE')
+            except Exception as e:
+                try:
+                    __log('failed due to:', traceback.format_exc())
+                    callback.send('FAIL', traceback.format_exc())
+                except:
+                    pass
+            self._queue.task_done()
+            hub.increase_capacity()
 
+        @_auto_restart
+        def _ping_it(self):
+            hub = self._hub.proxy()
+            while not self._quit.wait(timeout=10):
+                hub.ping()
+                _log("Pinged.")
 
-def _add_task(callback, package, process):
-    _log("Received new task, parsing...")
-    assert callback['type'] == 'xmlrpc'
-    callback_ = XMLRPCCallback(*callback['arguments'])
-    process_ = _ProcessSettings(**process)
-    callback_.send('RECEIVED')
-    _log("Registered new task.")
-    _queue.put(_Task(callback=callback_, package=package, process=process_))
+        def _add_task(self, callback, package, process):
+            _log("Received new task, parsing...")
+            assert callback['type'] == 'xmlrpc'
+            callback_ = XMLRPCCallback(*callback['arguments'])
+            process_ = _ProcessSettings(**process)
+            callback_.send('RECEIVED')
+            _log("Registering new task...")
+            self._queue.put(_Task(callback=callback_, package=package, process=process_))
+            _log("Registered.")
+            callback_.send('REGISTERED')
 
-
-@_auto_restart
-def _ping_it():
-    hub = _hub.proxy()
-    while not _quit.wait(timeout=10):
-        hub.ping()
-        _log("Pinged.")
-
-
-def _interface(addr, hub_uri, worker_count, resources):
-    signal.signal(signal.SIGTERM, _interrupt_raiser)
-    _log("Starting worker at {} hub={} threads={}".format(addr, hub_uri, worker_count))
-    hub = _hub.proxy()
-    with hub.context(capacity=worker_count):
-        pinger = threading.Thread(target=_ping_it)
-        pinger.start()
-        for resource, uri in resources:
-            hub.add_resource(resource, uri)
-        server = xmlrpc.server.SimpleXMLRPCServer(addr=addr, allow_none=True)
-        server.register_function(_add_task, name='add_task')
-        _log("Starting threads...")
-        workers = []
-        for i in range(worker_count):
-            thread = threading.Thread(target=_worker, args=(i,))
-            thread.start()
-            workers.append(thread)
-        _log("{} workers were started.".format(worker_count))
-        _log("Starting xmlrpc server...")
-        try:
-            server.serve_forever()
-        except (KeyboardInterrupt, _InterruptedError) as e:
-            _log("Exiting.")
-            _quit.set()
-            _log("Joining pinger...")
-            pinger.join()
-            _log("Joining workers...")
-            for worker in workers:
-                worker.join()
-            _log("Completed.")
+        def serve_forever(self):
+            _log("Starting {worker_count} workers listening on {addr}".format(addr=addr, worker_count=worker_count))
+            hub = self._hub.proxy()
+            with hub.context(capacity=self._worker_count):
+                pinger = threading.Thread(target=self._ping_it)
+                pinger.start()
+                for resource, uri in self._resources:
+                    hub.add_resource(resource, uri)
+                server = xmlrpc.server.SimpleXMLRPCServer(addr=self._addr, allow_none=True)
+                server.register_function(self._add_task, name='add_task')
+                _log("Starting threads...")
+                workers = []
+                for i in range(worker_count):
+                    thread = threading.Thread(target=_worker, args=(i,))
+                    thread.start()
+                    workers.append(thread)
+                _log("{} workers were started.".format(worker_count))
+                _log("Starting xmlrpc server...")
+                try:
+                    server.serve_forever()
+                except (KeyboardInterrupt, _InterruptedError) as e:
+                    _log("Exiting.")
+                    self._quit.set()
+                    _log("Joining pinger...")
+                    pinger.join()
+                    _log("Joining workers...")
+                    for worker in workers:
+                        worker.join()
+                    _log("Completed.")
 
 
 if __name__ == '__main__':
@@ -197,11 +196,16 @@ if __name__ == '__main__':
     args = parser.parse_args()
     host, port = tuple(args.addr.split(':'))
     port = int(port)
-    _repository = bunsan.pm.Repository(args.repository_config)
-    _hub = Hub(hub_uri=args.hub_uri, machine=args.machine)
-    _tmpdir = args.tmpdir
     def split_resource(s):
         pos = s.index('=')
         return (s[:pos], s[pos + 1:])
     resources = list(map(split_resource, args.resources or []))
-    _interface(addr=(host, port), hub_uri=args.hub_uri, worker_count=args.worker_count, resources=resources)
+    worker = Worker(
+        addr=(host, port),
+        worker_count=args.worker_count,
+        resources=resources,
+        repository=bunsan.pm.Repository(args.repository_config),
+        hub=Hub(hub_uri=args.hub_uri, machine=args.machine),
+        tmpdir=args.tmpdir)
+    signal.signal(signal.SIGTERM, _interrupt_raiser)
+    worker.serve_forever()
