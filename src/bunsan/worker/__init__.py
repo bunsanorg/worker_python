@@ -154,7 +154,13 @@ def _worker(num):
     __log("started")
     while not _quit.is_set():
         __log("waiting for task")
-        task = _queue.get()
+        while not _quit.is_set():
+            try:
+                task = _queue.get(timeout=0.1)
+            except queue.Empty:
+                pass
+        if _quit.is_set():
+            return
         hub.decrease_capacity()
         __log("task received")
         callback = None
