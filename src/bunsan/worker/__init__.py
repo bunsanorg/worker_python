@@ -166,6 +166,7 @@ def _worker(num):
                 pass
         if _quit.is_set():
             return
+        assert task is not None
         hub.decrease_capacity()
         __log("task received")
         callback = None
@@ -209,10 +210,9 @@ def _add_task(callback, package, process):
 @_auto_restart
 def _ping_it():
     hub = _hub.proxy()
-    while not _quit.is_set():
+    while not _quit.wait(timeout=10):
         hub.ping()
         _log("Pinged.")
-        time.sleep(10)
 
 
 def _interface(addr, hub_uri, worker_count, resources):
@@ -239,9 +239,12 @@ def _interface(addr, hub_uri, worker_count, resources):
         except (KeyboardInterrupt, _InterruptedError) as e:
             _log("Exiting.")
             _quit.set()
+            _log("Joining pinger...")
             pinger.join()
+            _log("Joining workers...")
             for worker in workers:
                 worker.join()
+            _log("Completed.")
 
 
 if __name__ == '__main__':
