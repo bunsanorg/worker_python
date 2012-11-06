@@ -209,7 +209,7 @@ def _add_task(callback, package, process):
 @_auto_restart
 def _ping_it():
     hub = _hub.proxy()
-    while _quit.is_set():
+    while not _quit.is_set():
         hub.ping()
         _log("Pinged.")
         time.sleep(10)
