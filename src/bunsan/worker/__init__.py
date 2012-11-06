@@ -116,14 +116,18 @@ class _Callback(object):
         self._args = args
 
     def send(self, msg_type, *args):
-        return self._method(self._args, msg_type, *args)
+        args_ = list(self._args) + [msg_type] + list(args)
+        return self._method(*args_)
 
 
 class _ProcessSettings(object):
 
     def __init__(self, arguments, stdin_data=None):
         self.arguments = arguments
-        self.stdin_data = stdin_data
+        if stdin_data is None:
+            self.stdin_data = None
+        else:
+            self.stdin_data = stdin_data.data
 
 
 class _Task(object):
@@ -154,7 +158,8 @@ def _worker(num):
     __log("started")
     while not _quit.is_set():
         __log("waiting for task")
-        while not _quit.is_set():
+        task = None
+        while not _quit.is_set() and task is None:
             try:
                 task = _queue.get(timeout=0.1)
             except queue.Empty:
