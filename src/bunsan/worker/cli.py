@@ -17,6 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--repository-config', action='store', dest='repository_config', help='path to repository config', required=True)
     parser.add_argument('-s', '--resource', action='append', dest='resources', help='resources in format resource_id=resource_uri')
     parser.add_argument('-t', '--tmpdir', action='store', dest='tmpdir', help='temporary directory path', default='/tmp')
+    parser.add_argument('-T', '--timeout', action='store', dest='timeout', type=int, help='connection timeout', default='10')
     args = parser.parse_args()
     host, port = tuple(args.addr.split(':'))
     port = int(port)
@@ -29,6 +30,6 @@ if __name__ == '__main__':
         worker_count=args.worker_count,
         resources=resources,
         repository=bunsan.pm.Repository(args.repository_config),
-        hub=Hub(hub_uri=args.hub_uri, machine=args.machine),
+        hub=Hub(hub_uri=args.hub_uri, machine=args.machine, timeout=args.timeout),
         tmpdir=args.tmpdir)
     worker.serve_forever(signals=[signal.SIGTERM])

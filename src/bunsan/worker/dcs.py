@@ -1,4 +1,4 @@
-import xmlrpc.client
+from bunsan.worker.toxmlrpc import ServerProxy
 
 class Hub(object):
 
@@ -12,8 +12,8 @@ class Hub(object):
 
 class HubProxy(object):
 
-    def __init__(self, hub_uri, machine):
-        self._hub = xmlrpc.client.ServerProxy(hub_uri)
+    def __init__(self, hub_uri, machine, *args, **kwargs):
+        self._hub = ServerProxy(hub_uri, *args, **kwargs)
         self._machine = str(machine)
 
     def ping(self):
