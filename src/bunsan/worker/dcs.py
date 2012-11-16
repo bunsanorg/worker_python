@@ -26,8 +26,13 @@ class Hub(object):
     def register_machine(self, capacity):
         with self._lock:
             args = [self._description, float(capacity)]
+            kwargs = dict()
             if self._resources is not None:
-                args.append(self._resources)
+                kwargs['resources'] = self._resources
+            if self._id is not None:
+                kwargs['previous_id'] = self._id
+            if len(kwargs):
+                args.append(kwargs)
             self._id = self._hub.register_machine(*args)
             assert self._id is not None
             return self._id
