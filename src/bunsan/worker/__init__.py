@@ -138,15 +138,19 @@ class Worker(object):
             _log("Pinged.")
 
     def _add_task(self, callback, package, process):
+        """
+            Note: error in this method will cause xmlrpc fault.
+            No other information is needed for caller.
+        """
         _log("Received new task, parsing...")
         assert callback['type'] == 'xmlrpc'
         callback_ = XMLRPCCallback(*callback['arguments'])
         process_ = _ProcessSettings(**process)
         callback_.send('RECEIVED')
         _log("Registering new task...")
-        self._queue.put(_Task(callback=callback_, package=package, process=process_))
+        task = _Task(callback=callback_, package=package, process=process_)
+        self._queue.put(task)
         _log("Registered.")
-        callback_.send('REGISTERED')
 
     def serve_forever(self, signals=None):
         """
