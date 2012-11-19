@@ -71,7 +71,7 @@ class _Task(object):
         self.package = package
         self.process = process
 
-class _Capacity(object):
+class _Counter(object):
 
     _lock = threading.Lock()
 
@@ -112,11 +112,15 @@ class Worker(object):
         self._tmpdir = tmpdir
         self._addr = addr
         self._worker_count = worker_count
-        self._capacity = _Capacity(self._set_capacity, self._worker_count)
+        self._counter = _Counter(self._set_capacity, self._worker_count)
         self._need_registration = threading.Event()
+
+    def _capacity(self):
+        return self._counter() - self._queue.qsize()
 
     def _set_capacity(self):
         try:
+            _log("Updating capacity...")
             self._hub.set_capacity(self._capacity())
         except Exception as e:
             _log("Unable to set capacity, due to {}, need registration".format(e))
@@ -139,7 +143,7 @@ class Worker(object):
             if self._quit.is_set():
                 return
             assert task is not None
-            with self._capacity.use():
+            with self._counter.use():
                 __log("task received")
                 callback = None
                 try:
@@ -193,6 +197,7 @@ class Worker(object):
         task = _Task(callback=callback_, package=package, process=process_)
         self._queue.put(task)
         _log("Registered.")
+        self._set_capacity()
 
     def serve_forever(self, signals=None):
         """
