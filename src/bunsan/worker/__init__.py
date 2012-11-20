@@ -227,16 +227,6 @@ class Worker(object):
                     server.handle_request()
                     if not server.request_timeout:
                         _log("Request was handled.")
-                    # ping it
-                    _log("Trying to ping...")
-                    try:
-                        if not self._hub.ping():
-                            self._need_registration.set()
-                        _log("Pinged.")
-                    except Exception as e:
-                        _log("Unable to ping due to", e)
-                        self._need_registration.set()
-                    # check registration
                     if self._need_registration.is_set():
                         _log("Registration is needed...")
                         try:
@@ -246,6 +236,15 @@ class Worker(object):
                             self._need_registration.clear()
                         except Exception as e:
                             _log("Unable to register due to", e)
+                    else:
+                        _log("Trying to ping...")
+                        try:
+                            if not self._hub.ping():
+                                self._need_registration.set()
+                            _log("Pinged.")
+                        except Exception as e:
+                            _log("Unable to ping due to", e)
+                            self._need_registration.set()
             except (KeyboardInterrupt, _InterruptedError) as e:
                 _log("Exiting.")
                 self._quit.set()
