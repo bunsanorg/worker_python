@@ -232,26 +232,22 @@ class Worker(object):
             _log("{} workers were started.".format(self._worker_count))
             _log("Starting xmlrpc server...")
             try:
+                _log("Entering task handling loop...")
                 while True:
-                    _log("Entering task handling loop...")
-                    while not self._need_registration.is_set():
-                        if not server.request_timeout:
-                            _log("Waiting for request...")
-                        server.handle_request()
-                        if not server.request_timeout:
-                            _log("Request was handled.")
-                    _log("Registration is needed...")
-                    registered = False
-                    while not registered:
+                    if not server.request_timeout:
+                        _log("Waiting for request...")
+                    server.handle_request()
+                    if not server.request_timeout:
+                        _log("Request was handled.")
+                    if self._need_registration.is_set():
+                        _log("Registration is needed...")
                         try:
                             _log("Trying to register machine...")
                             self._hub.register_machine(capacity=self._capacity())
                             _log("Machine was successfully registered.")
-                            registered = True
                             self._need_registration.clear()
                         except Exception as e:
                             _log("Unable to register due to", e)
-                            time.sleep(10) # FIXME hardcode # some reasonable timeout
             except (KeyboardInterrupt, _InterruptedError) as e:
                 _log("Exiting.")
                 self._quit.set()
