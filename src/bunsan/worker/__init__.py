@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 
 from bunsan.worker.callback import *
+from bunsan.worker.counter import *
 
 # for logging
 import math
@@ -53,7 +54,6 @@ def _auto_restart(func):
     return func_
 
 
-
 class _ProcessSettings(object):
 
     def __init__(self, arguments, stdin_data=None):
@@ -71,36 +71,6 @@ class _Task(object):
         self.package = package
         self.process = process
 
-class _Counter(object):
-
-    _lock = threading.Lock()
-
-    def __init__(self, callback, init=1):
-        self._callback = callback
-        self._value = init
-
-    def __call__(self):
-        with self._lock:
-            return self._value
-
-    def use(self, delta=1):
-        capacity = self
-        class Context(object):
-            def __enter__(self):
-                with capacity._lock:
-                    capacity._value -= delta
-                try:
-                    capacity._callback()
-                except BaseException as e:
-                    with capacity._lock:
-                        capacity._value += delta
-                    raise e
-            def __exit__(self, exc_type, exc_value, traceback):
-                with capacity._lock:
-                    capacity._value += delta
-                capacity._callback()
-        return Context()
-
 
 class Worker(object):
 
@@ -113,7 +83,7 @@ class Worker(object):
         self._tmpdir = tmpdir
         self._addr = addr
         self._worker_count = worker_count
-        self._counter = _Counter(self._set_capacity, self._worker_count)
+        self._counter = Counter(self._set_capacity, self._worker_count)
         self._need_registration = threading.Event()
 
     def _capacity(self):
