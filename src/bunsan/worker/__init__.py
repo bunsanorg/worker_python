@@ -172,17 +172,6 @@ class Worker(object):
                 finally:
                     self._queue.task_done()
 
-    @_auto_restart
-    def _ping_it(self):
-        while not self._quit.wait(timeout=10):
-            try:
-                if not self._hub.ping():
-                    self._need_registration.set()
-            except Exception as e:
-                self._need_registration.set()
-                raise e
-            _log("Pinged.")
-
     def _add_task(self, callback, package, process):
         """
             Note: error in this method will cause xmlrpc fault.
@@ -209,8 +198,6 @@ class Worker(object):
                 signal.signal(s, _interrupt_raiser)
         _log("Starting {worker_count} workers listening on {addr}".format(addr=self._addr, worker_count=self._worker_count))
         with self._hub.context(capacity=self._capacity()):
-            pinger = threading.Thread(target=self._ping_it)
-            pinger.start()
             class XMLRPCServer(xmlrpc.server.SimpleXMLRPCServer):
                 def __init__(self, *args, **kwargs):
                     super(XMLRPCServer, self).__init__(*args, **kwargs)
@@ -221,7 +208,7 @@ class Worker(object):
                 def handle_timeout(self):
                     self.request_timeout = True
             server = XMLRPCServer(addr=self._addr, allow_none=True)
-            server.timeout = 1
+            server.timeout = 1 #FIXME hardcode
             server.register_function(self._add_task, name='add_task')
             _log("Starting threads...")
             workers = []
@@ -239,6 +226,16 @@ class Worker(object):
                     server.handle_request()
                     if not server.request_timeout:
                         _log("Request was handled.")
+                    # ping it
+                    _log("Trying to ping...")
+                    try:
+                        if not self._hub.ping():
+                            self._need_registration.set()
+                        _log("Pinged.")
+                    except Exception as e:
+                        _log("Unable to ping due to", e)
+                        self._need_registration.set()
+                    # check registration
                     if self._need_registration.is_set():
                         _log("Registration is needed...")
                         try:
@@ -251,8 +248,6 @@ class Worker(object):
             except (KeyboardInterrupt, _InterruptedError) as e:
                 _log("Exiting.")
                 self._quit.set()
-                _log("Joining pinger...")
-                pinger.join()
                 _log("Joining workers...")
                 for worker in workers:
                     worker.join()
