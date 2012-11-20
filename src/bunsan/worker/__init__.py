@@ -104,9 +104,10 @@ class _Counter(object):
 
 class Worker(object):
 
-    def __init__(self, repository, hub, tmpdir, addr, worker_count):
+    def __init__(self, repository, query_interval, hub, tmpdir, addr, worker_count):
         self._quit = threading.Event()
         self._queue = queue.Queue()
+        self._query_interval = query_interval
         self._repository = repository
         self._hub = hub
         self._tmpdir = tmpdir
@@ -208,7 +209,7 @@ class Worker(object):
                 def handle_timeout(self):
                     self.request_timeout = True
             server = XMLRPCServer(addr=self._addr, allow_none=True)
-            server.timeout = 1 #FIXME hardcode
+            server.timeout = self._query_interval
             server.register_function(self._add_task, name='add_task')
             _log("Starting threads...")
             workers = []

@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--resource', action='append', dest='resources', help='resources in format resource_id=resource_uri')
     parser.add_argument('-t', '--tmpdir', action='store', dest='tmpdir', help='temporary directory path', default='/tmp')
     parser.add_argument('-T', '--timeout', action='store', dest='timeout', type=int, help='connection timeout', default='10')
+    parser.add_argument('-i', '--query-interval', action='store', dest='query_interval', type=int, help='dcs query interval', default='10')
     args = parser.parse_args()
     host, port = tuple(args.addr.split(':'))
     port = int(port)
@@ -28,6 +29,7 @@ if __name__ == '__main__':
     worker = bunsan.worker.Worker(
         addr=(host, port),
         worker_count=args.worker_count,
+        query_interval=args.query_interval,
         repository=bunsan.pm.Repository(args.repository_config),
         hub=Hub(hub_uri=args.hub_uri, description=args.description, resources=resources, timeout=args.timeout),
         tmpdir=args.tmpdir)
