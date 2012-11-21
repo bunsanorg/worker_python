@@ -15,6 +15,9 @@ from bunsan.worker.callback import *
 from bunsan.worker.counter import *
 
 
+_logger = logging.getLogger('bunsan.worker')
+
+
 class _InterruptedError(BaseException):
     pass
 
@@ -30,11 +33,11 @@ def _auto_restart(func):
         while not completed:
             try:
                 func(*args, **kwargs)
-                logging.debug("%s has completed.", funcname)
+                _logger.debug("%s has completed.", funcname)
                 completed = True
             except Exception as e:
-                logging.exception("%s: unable to complete due to %s.", funcname, e)
-        logging.debug("Exiting %s loop.", func)
+                _logger.exception("%s: unable to complete due to %s.", funcname, e)
+        _logger.debug("Exiting %s loop.", func)
     return func_
 
 
@@ -58,6 +61,8 @@ class _Task(object):
 
 class Worker(object):
 
+    _logger = _logger.getChild('Worker')
+
     def __init__(self, repository, query_interval, hub, tmpdir, addr, worker_count):
         self._quit = threading.Event()
         self._queue = queue.Queue()
@@ -75,18 +80,18 @@ class Worker(object):
 
     def _set_capacity(self):
         try:
-            logging.debug("Updating capacity...")
+            self._logger.debug("Updating capacity...")
             self._hub.set_capacity(self._capacity())
         except Exception as e:
-            logging.exception("Unable to set capacity, due to %s, need registration.", e)
+            self._logger.exception("Unable to set capacity, due to %s, need registration.", e)
             self._need_registration.set()
 
     @_auto_restart
     def _worker(self, num):
         workername = "Worker {}".format(num)
-        logging.debug(workername + " has started.")
+        self._logger.debug(workername + " has started.")
         while not self._quit.is_set():
-            logging.debug("%s: waiting for task", workername)
+            self._logger.debug("%s: waiting for task", workername)
             task = None
             while not self._quit.is_set() and task is None:
                 try:
@@ -97,17 +102,17 @@ class Worker(object):
                 return
             assert task is not None
             with self._counter.use():
-                logging.debug("%s: task received.", workername)
+                self._logger.debug("%s: task received.", workername)
                 callback = None
                 try:
                     callback = task.callback
                     callback.send('STARTED')
                     with tempfile.TemporaryDirectory(dir=self._tmpdir) as tmpdir:
                         callback.send('EXTRACTING')
-                        logging.debug("%s: extracting to %s...", workername, tmpdir)
+                        self._logger.debug("%s: extracting to %s...", workername, tmpdir)
                         self._repository.extract(task.package, tmpdir)
                         callback.send('EXTRACTED')
-                        logging.debug("%s: running %s.", workername, repr(task.process.arguments))
+                        self._logger.debug("%s: running %s.", workername, repr(task.process.arguments))
                         with subprocess.Popen(task.process.arguments, cwd=tmpdir, stdin=subprocess.PIPE) as proc:
                             if task.process.stdin_data is not None:
                                 proc.stdin.write(task.process.stdin_data)
@@ -118,10 +123,10 @@ class Worker(object):
                     callback.send('DONE')
                 except Exception as e:
                     try:
-                        logging.exception("%s: failed due to %s.", workername, e)
+                        self._logger.exception("%s: failed due to %s.", workername, e)
                         callback.send('FAIL', traceback.format_exc())
                     except Exception as e:
-                        logging.exception("%s: unable to use callback due to %s.", workername, e)
+                        self._logger.exception("%s: unable to use callback due to %s.", workername, e)
                         pass
                 finally:
                     self._queue.task_done()
@@ -131,15 +136,15 @@ class Worker(object):
             Note: error in this method will cause xmlrpc fault.
             No other information is needed for caller.
         """
-        logging.debug("Received new task, parsing...")
+        self._logger.debug("Received new task, parsing...")
         assert callback['type'] == 'xmlrpc'
         callback_ = XMLRPCCallback(*callback['arguments'])
         process_ = _ProcessSettings(**process)
         callback_.send('RECEIVED')
-        logging.debug("Registering new task...")
+        self._logger.debug("Registering new task...")
         task = _Task(callback=callback_, package=package, process=process_)
         self._queue.put(task)
-        logging.debug("Registered.")
+        self._logger.debug("Registered.")
         self._set_capacity()
 
     def serve_forever(self, signals=None):
@@ -148,9 +153,9 @@ class Worker(object):
         """
         if signals is not None:
             for s in signals:
-                logging.debug("Registering %s for %s signal...", _interrupt_raiser, s)
+                self._logger.debug("Registering %s for %s signal...", _interrupt_raiser, s)
                 signal.signal(s, _interrupt_raiser)
-        logging.info("Starting %d worker(s) listening on \"%s:%d\"...", self._worker_count, *self._addr)
+        self._logger.info("Starting %d worker(s) listening on \"%s:%d\"...", self._worker_count, *self._addr)
         with self._hub.context(capacity=self._capacity()):
             class XMLRPCServer(xmlrpc.server.SimpleXMLRPCServer):
                 def __init__(self, *args, **kwargs):
@@ -164,44 +169,44 @@ class Worker(object):
             server = XMLRPCServer(addr=self._addr, allow_none=True)
             server.timeout = self._query_interval
             server.register_function(self._add_task, name='add_task')
-            logging.debug("Starting threads...")
+            self._logger.debug("Starting threads...")
             workers = []
             for i in range(self._worker_count):
                 thread = threading.Thread(target=self._worker, args=(i,))
                 thread.start()
                 workers.append(thread)
-            logging.debug("%d workers were started.", self._worker_count)
-            logging.debug("Starting xmlrpc server...")
+            self._logger.debug("%d workers were started.", self._worker_count)
+            self._logger.debug("Starting xmlrpc server...")
             try:
-                logging.debug("Entering task handling loop...")
+                self._logger.debug("Entering task handling loop...")
                 while True:
                     if not server.request_timeout:
-                        logging.debug("Waiting for request...")
+                        self._logger.debug("Waiting for request...")
                     server.handle_request()
                     if not server.request_timeout:
-                        logging.debug("Request was handled.")
+                        self._logger.debug("Request was handled.")
                     if self._need_registration.is_set():
-                        logging.debug("Registration is needed...")
+                        self._logger.debug("Registration is needed...")
                         try:
-                            logging.debug("Trying to register machine...")
+                            self._logger.debug("Trying to register machine...")
                             self._hub.register_machine(capacity=self._capacity())
-                            logging.debug("Machine was successfully registered.")
+                            self._logger.debug("Machine was successfully registered.")
                             self._need_registration.clear()
                         except Exception as e:
-                            logging.exception("Unable to register due to %s.", e)
+                            self._logger.exception("Unable to register due to %s.", e)
                     else:
-                        logging.debug("Trying to ping...")
+                        self._logger.debug("Trying to ping...")
                         try:
                             if not self._hub.ping():
                                 self._need_registration.set()
-                            logging.debug("Pinged.")
+                            self._logger.debug("Pinged.")
                         except Exception as e:
-                            logging.exception("Unable to ping due to %s.", e)
+                            self._logger.exception("Unable to ping due to %s.", e)
                             self._need_registration.set()
             except (KeyboardInterrupt, _InterruptedError) as e:
-                logging.debug("Exiting.")
+                self._logger.debug("Exiting.")
                 self._quit.set()
-                logging.debug("Joining workers...")
+                self._logger.debug("Joining workers...")
                 for worker in workers:
                     worker.join()
-                logging.info("Completed.")
+                self._logger.info("Completed.")
