@@ -1,4 +1,5 @@
 import signal
+import logging
 
 import bunsan.worker
 from bunsan.worker.dcs import Hub
@@ -19,7 +20,9 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--tmpdir', action='store', dest='tmpdir', help='temporary directory path', default='/tmp')
     parser.add_argument('-T', '--timeout', action='store', dest='timeout', type=int, help='connection timeout', default='10')
     parser.add_argument('-i', '--query-interval', action='store', dest='query_interval', type=int, help='dcs query interval', default='10')
+    parser.add_argument('-V', '--verbosity', action='store', dest='verbosity', help='verbosity level', default='INFO')
     args = parser.parse_args()
+    logging.basicConfig(level=eval('logging.' + args.verbosity), format='[%(asctime)s] %(levelname)s [%(pathname)s:%(funcName)s():%(lineno)d] - %(message)s')
     host, port = tuple(args.addr.split(':'))
     port = int(port)
     def split_resource(s):
