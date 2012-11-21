@@ -1,5 +1,8 @@
+import sys
 import signal
 import logging
+import logging.handlers
+import syslog
 
 import bunsan.worker
 from bunsan.worker.dcs import Hub
@@ -21,8 +24,23 @@ if __name__ == '__main__':
     parser.add_argument('-T', '--timeout', action='store', dest='timeout', type=int, help='connection timeout', default='10')
     parser.add_argument('-i', '--query-interval', action='store', dest='query_interval', type=int, help='dcs query interval', default='10')
     parser.add_argument('-V', '--verbosity', action='store', dest='verbosity', help='verbosity level', default='INFO')
+    parser.add_argument('--log-handler', action='append', dest='log_handlers', help='logging handler facility', default=['STDERR'])
     args = parser.parse_args()
-    logging.basicConfig(level=eval('logging.' + args.verbosity), format='[%(asctime)s] %(levelname)s [%(pathname)s:%(funcName)s():%(lineno)d] - %(message)s')
+    handlers = []
+    for handler in args.log_handlers:
+        if handler == 'STDERR':
+            handlers.append(logging.StreamHandler(sys.stderr))
+        elif handler == 'SYSLOG':
+            handlers.append(logging.handlers.SysLogHandler(address='/dev/log', facility=syslog.LOG_DAEMON))
+        elif handler.startswith('FILE:'):
+            handlers.append(logging.FileHandler(handler[len('FILE:'):]))
+        else:
+            raise ValueError("Invalid log handler", handler)
+    logging.basicConfig(style='{',
+                        level=eval('logging.' + args.verbosity),
+                        format='[{asctime}.{msecs:07.3f}] {levelname} [{name}:{funcName}():{lineno}] - {message}',
+                        datefmt='%Y-%b-%d %T',
+                        handlers=handlers)
     host, port = tuple(args.addr.split(':'))
     port = int(port)
     def split_resource(s):
