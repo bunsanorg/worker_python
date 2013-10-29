@@ -6,6 +6,7 @@ import syslog
 
 import bunsan.worker
 from bunsan.worker.dcs import Hub
+from bunsan.worker.none_dcs import NoneHub
 
 import bunsan.pm
 
@@ -15,7 +16,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser("bunsan::worker")
     parser.add_argument('-v', '--version', action='version', version='%(prog)s 0.0.1', help="version information")
     parser.add_argument('-l', '--listen', action='store', dest='addr', help='Listen on addr:port', required=True)
-    parser.add_argument('-d', '--hub', action='store', dest='hub_uri', help='hub xmlrpc interface', required=True)
+    parser.add_argument('-d', '--hub', action='store', dest='hub_uri', help='hub xmlrpc interface')
     parser.add_argument('-m', '--description', action='store', dest='description', help='machine description', required=True)
     parser.add_argument('-c', '--worker-count', action='store', dest='worker_count', type=int, help='worker count', default=1)
     parser.add_argument('-r', '--repository-config', action='store', dest='repository_config', help='path to repository config', required=True)
@@ -52,6 +53,10 @@ if __name__ == '__main__':
         worker_count=args.worker_count,
         query_interval=args.query_interval,
         repository=bunsan.pm.Repository(args.repository_config),
-        hub=Hub(hub_uri=args.hub_uri, description=args.description, resources=resources, timeout=args.timeout),
+        hub=(Hub if args.hub_uri else NoneHub)(
+            hub_uri=args.hub_uri,
+            description=args.description,
+            resources=resources,
+            timeout=args.timeout),
         tmpdir=args.tmpdir)
     worker.serve_forever(signals=[signal.SIGTERM])
